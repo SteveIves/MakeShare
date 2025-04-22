@@ -49,6 +49,7 @@ main makeshare
         tt              ,i4 ,1          ;;Terminal channel
         pipe            ,i4 ,2          ;;Pipe channel for DCL command
         comfile         ,i4 ,3          ;;Output command file channel
+        optfile         ,i4 ,4          ;;Linker options file
         ix              ,i4             ;;Generic loop counter
         spare_data      ,i4             ;;Number of spare data slots in symbol vector
         spare_routines  ,i4             ;;Number of spare procedure slots in symbol vector
@@ -58,6 +59,7 @@ main makeshare
         linktk          ,boolean        ;;Should the image link against UI Toolkit?
         quiet           ,boolean        ;;Quiet mode is active
         debugSupport    ,boolean        ;;Add debugging support in the symbol vector
+        optionsFile,    boolean         ;;Generate a linker options file instead of inline options.
         buff            ,a128           ;;Input buffer
         ClBuffer        ,[10]a80        ;;Command line parameters buffer
         ClCount         ,d4             ;;Number of command line parameters in buffer
@@ -226,6 +228,10 @@ proc
     if (ok)
         quiet = CommandLine("q ")
 
+    ;;Should we create a linker options file? (-o option)
+    if (ok)
+        optionsFile = CommandLine("o ")
+
     ;;Make sure we can open the library with the path provided
     if (ok)
     begin
@@ -358,6 +364,11 @@ write_comfile,
 
     open(comfile,o,libname+".COM",OPTIONS:"/STREAM")
 
+    if (optionsFile) then 
+        open(optfile,o,libname+".OPT",OPTIONS:"/STREAM")
+    else
+        optfile = comfile
+    
     ;;Header section
 
     writes(comfile,'$ !============================================================================')
@@ -402,96 +413,99 @@ write_comfile,
 
     ;;Input items
 
-    writes(comfile,' SYS$INPUT/OPTION')
+    if (optionsFile) then
+        writes(comfile,' SYS$INPUT/OPTION')
+    elaw
+        writes(comfile,libname+'.OPT/OPTION')
 
-    writes(comfile,'!')
-    writes(comfile,libspec+'/LIBRARY')
+    writes(optfile,'!')
+    writes(optfile,libspec+'/LIBRARY')
 
     if (debugSupport)
-        writes(comfile,'DBLDIR:elb.obj')
+        writes(optfile,'DBLDIR:elb.obj')
 
     if (linksql)
-        writes(comfile,'SSQLRTL/SHARE')
+        writes(optfile,'SSQLRTL/SHARE')
 
     if (linktk)
-        writes(comfile,'TKLIB_SH/SHARE')
+        writes(optfile,'TKLIB_SH/SHARE')
 
-    writes(comfile,'SYNRTL/SHARE')
-    writes(comfile,'DBLTLIB/LIBRARY')
-    writes(comfile,'!')
+    writes(optfile,'SYNRTL/SHARE')
+    writes(optfile,'DBLTLIB/LIBRARY')
+    writes(optfile,'!')
 
     ;;Collects and clusters
 
-    writes(comfile,'CLUSTER = ' + libname + '_STATIC_RECORDS')
-    writes(comfile,'COLLECT = ' + libname + '_STATIC_RECORDS, $DBL_STCREC')
-    writes(comfile,'CLUSTER = ' + libname + '_LOCAL_DATA')
-    writes(comfile,'COLLECT = ' + libname + '_LOCAL DATA,$DBL_DATA,$LOCAL,$DATA')
-    writes(comfile,'CLUSTER = ' + libname + '_ADDRESS')
-    writes(comfile,'COLLECT = ' + libname + '_ADDRESS,$DBL_DESCR,$DBL_FXDCTL,$EXT$,$LINK$')
-    writes(comfile,'CLUSTER = ' + libname + '$$READONLY')
-    writes(comfile,'COLLECT = ' + libname + '$$READONLY,$CODE$,$DBLTRNSF_CODE')
-    writes(comfile,'CLUSTER = ' + libname + '$$CODE')
-    writes(comfile,'COLLECT = ' + libname + '$$CODE,$DBG$,$DBL_ADDR,$DBL_CODE,$DBL_LINCTL,$DBL_LITERAL')
-    writes(comfile,'!')
+    writes(optfile,'CLUSTER = ' + libname + '_STATIC_RECORDS')
+    writes(optfile,'COLLECT = ' + libname + '_STATIC_RECORDS, $DBL_STCREC')
+    writes(optfile,'CLUSTER = ' + libname + '_LOCAL_DATA')
+    writes(optfile,'COLLECT = ' + libname + '_LOCAL DATA,$DBL_DATA,$LOCAL,$DATA')
+    writes(optfile,'CLUSTER = ' + libname + '_ADDRESS')
+    writes(optfile,'COLLECT = ' + libname + '_ADDRESS,$DBL_DESCR,$DBL_FXDCTL,$EXT$,$LINK$')
+    writes(optfile,'CLUSTER = ' + libname + '$$READONLY')
+    writes(optfile,'COLLECT = ' + libname + '$$READONLY,$CODE$,$DBLTRNSF_CODE')
+    writes(optfile,'CLUSTER = ' + libname + '$$CODE')
+    writes(optfile,'COLLECT = ' + libname + '$$CODE,$DBG$,$DBL_ADDR,$DBL_CODE,$DBL_LINCTL,$DBL_LITERAL')
+    writes(optfile,'!')
 
     if (datasections.Count)
     begin
-        writes(comfile,'! Collect shared data')
-        writes(comfile,'!')
-        writes(comfile,'CLUSTER = ' + libname + '_SHARED_DATA')
-        writes(comfile,'COLLECT = ' + libname + '_SHARED_DATA, -')
+        writes(optfile,'! Collect shared data')
+        writes(optfile,'!')
+        writes(optfile,'CLUSTER = ' + libname + '_SHARED_DATA')
+        writes(optfile,'COLLECT = ' + libname + '_SHARED_DATA, -')
         for ix from 0 thru datasections.Count-1
         begin
-            display(comfile,'   ' + (a)datasections[ix])
+            display(optfile,'   ' + (a)datasections[ix])
             if (ix<datasections.Count-1) then
-                writes(comfile,",-")
+                writes(optfile,",-")
             else
-                writes(comfile,"")
+                writes(optfile,"")
         end
-        writes(comfile,'!')
+        writes(optfile,'!')
     end
 
     ;;Symbol vector
 
-    writes(comfile,'symbol_vector=(-')
+    writes(optfile,'symbol_vector=(-')
 
     if (debugSupport)
     begin
-        writes(comfile,'    !')
-        writes(comfile,'    ! Debugging support')
-        writes(comfile,'    !')
-        writes(comfile,"    $ELB_DBG=data, -")
+        writes(optfile,'    !')
+        writes(optfile,'    ! Debugging support')
+        writes(optfile,'    !')
+        writes(optfile,"    $ELB_DBG=data, -")
     end
 
     if (datasections.Count)
     begin
-        writes(comfile,'    !')
-        writes(comfile,'    ! Shared data')
-        writes(comfile,'    !')
+        writes(optfile,'    !')
+        writes(optfile,'    ! Shared data')
+        writes(optfile,'    !')
 
         for ix from 0 thru datasections.Count-1
-            writes(comfile,'    ' + (a)datasections[ix] + ' = data,-')
+            writes(optfile,'    ' + (a)datasections[ix] + ' = data,-')
 
         if (spare_data)
             for ix from 1 thru spare_data
-                writes(comfile,'    SPARE,-')
+                writes(optfile,'    SPARE,-')
     end
 
-    writes(comfile,'    !')
-    writes(comfile,'    ! Procedures')
-    writes(comfile,'    !')
+    writes(optfile,'    !')
+    writes(optfile,'    ! Procedures')
+    writes(optfile,'    !')
 
     for ix from 0 thru routines.Count-1
     begin
-        display(comfile,'    '+(a)routines[ix]+' = procedure')
+        display(optfile,'    '+(a)routines[ix]+' = procedure')
         if (ix<routines.Count-1) then
-            writes(comfile,',-')
+            writes(optfile,',-')
         else
         begin
             if (spare_routines) then
-                writes(comfile,',-')
+                writes(optfile,',-')
             else
-                writes(comfile,')')
+                writes(optfile,')')
         end
     end
 
@@ -499,24 +513,30 @@ write_comfile,
     begin
         for ix from 1 thru spare_routines
         begin
-            display(comfile,'    SPARE')
+            display(optfile,'    SPARE')
             if (ix<spare_routines) then
-                writes(comfile,',-')
+                writes(optfile,',-')
             else
-                writes(comfile,')')
+                writes(optfile,')')
         end
     end
 
     ;;All done
 
-    writes(comfile,'$ !')
-    writes(comfile,'$ EXIT')
-    writes(comfile,'$ !')
+    writes(optfile,'$ !')
+    writes(optfile,'$ EXIT')
+    writes(optfile,'$ !')
 
     close comfile
 
+    if (optionsFile)
+        close optfile
+    
     if (!quiet)
         writes(tt,"Created "+libname+".COM")
+
+    if (!quiet && optionsFile)
+        writes(tt,"Created "+libname+".OPT")
 
     return
 
@@ -546,6 +566,8 @@ usage,
     writes(tt,"    -xd              Add support for xfServerPlus debugging")
     writes(tt,"")
     writes(tt,"    -m               Generate a linker map file")
+    writes(tt,"")
+    writes(tt,"    -o               Generate a linker options file instead of inline options")    
     writes(tt,"")
     writes(tt,"    -sql             Link against the SQL Connection shared image")
     writes(tt,"")
