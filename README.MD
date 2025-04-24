@@ -1,20 +1,19 @@
 
-Title:          MAKESHARE
+# MAKESHARE
 
-Author:         Steve Ives
+An OpenVMS command-line utility that creates a DCL command procedure to link
+a shared imaged from an object library.
 
-Platforms:      OpenVMS (Alpha and Integrity)
+---
 
-Description:    Creates a command procedure to link a shared imaged from an object library
+### Usage
 
----------------------------------------------------------------------------------------------------------------------------------
-
-  This utility must be executed via a global symbol:
-
+This utility must be executed via a global symbol:
+```
     $ MAKESHARE:==$DISK:[DIRECTORY]MAKESHARE.EXE
-
-  Usage:
-
+```
+### Options
+```
     $ MAKESHARE -l <library> [-e <location>] [-s <suffix>] [-q]
                              [-m] [-sql] [-sd <n>] [-sp <n>]
 
@@ -41,9 +40,9 @@ Description:    Creates a command procedure to link a shared imaged from an obje
     -sp <n>          Include n spare symbol vector positions for procedures
 
     -q               Quiet mode, don't display file created message
-
-  Examples:
-
+```
+### Examples
+```
     $ makeshare -l MYLIB.OLB
 
          Creates a command procedure named MYLIB.COM which can be used to link
@@ -64,4 +63,4 @@ Description:    Creates a command procedure to link a shared imaged from an obje
          and will have 10 spare slots in the symbol vector for additional data
          items and 100 spare slots for additional procedures. A linker map file
          named MYLIB_SH.MAP will be created in the current directory.
-
+```

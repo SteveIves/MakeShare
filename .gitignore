@@ -1,0 +1,6 @@
+
+.intellisense/
+.vs/
+Debug/
+Release/
+obj/
