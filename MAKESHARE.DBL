@@ -46,17 +46,13 @@
 ;    $ DIB/OPT MAKESHARE
 ;    $ LINK MAKESHARE,SYS$SHARE:SYNRTL/OPT
 ;
-; 2. Make sure your process is in "extended parse" mode.
-;
-;   $ SET PROCESS/PARSE_MODE=EXTENDED
-;
-; 3. Assign a global symbol:
+; 2. Assign a global symbol:
 ;
 ;    $ MAKESHARE:==$<disk>:[<directory>]MAKESHARE.EXE
 ;
 ; 3. Use it, to get started view the usage information, like this:
 ;
-;    $ MAKESHARE -h
+;    $ MAKESHARE -H
 ;
 ;=============================================================================
 
@@ -108,14 +104,14 @@ proc
     end
 
     ;Are we being asked for help?
-    if (CommandLine("h ")||CommandLine("? "))
+    if (CommandLine("H ")||CommandLine("? "))
     begin
         call usage
         stop
     end
 
     ;Get the object library spec from the command line (-l libspec)
-    if (CommandLine("l ",1,ClBuffer,ClCount)) then
+    if (CommandLine("L ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             libspec = %atrim(ClBuffer[1])
@@ -134,7 +130,7 @@ proc
     end
 
     ;Do we have a location for the shared image executable (-e option)
-    if (CommandLine("e ",1,ClBuffer,ClCount)) then
+    if (CommandLine("E ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             exelocation = %atrim(ClBuffer[1])
@@ -152,7 +148,7 @@ proc
     end
 
     ;Do we have a suffix for the shared image executable (-s option)
-    if (CommandLine("s ",1,ClBuffer,ClCount)) then
+    if (CommandLine("S ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             exesuffix = %atrim(ClBuffer[1])
@@ -170,7 +166,7 @@ proc
     end
 
     ;Are we being asked for spare space for data in the symbol vector  (-sd option)
-    if (CommandLine("sd ",1,ClBuffer,ClCount)) then
+    if (CommandLine("SD ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             spare_data = %integer(%atrim(ClBuffer[1]))
@@ -188,7 +184,7 @@ proc
     end
 
     ;Are we being asked for spare space for procedures in the symbol vector  (-sp option)
-    if (CommandLine("sp ",1,ClBuffer,ClCount)) then
+    if (CommandLine("SP ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             spare_routines = %integer(%atrim(ClBuffer[1]))
@@ -206,22 +202,22 @@ proc
     end
 
     ;Are we being asked to support xfServerPlus debugging?
-    debugSupport = (CommandLine("xd ",1,ClBuffer,ClCount))
+    debugSupport = (CommandLine("XD ",1,ClBuffer,ClCount))
 
     ;Should the link create a map file? (-m option)
-    mapFile = CommandLine("m ")
+    mapFile = CommandLine("M ")
 
     ;Should we link against the SQL Connection library? (-sql option)
-    linksql = CommandLine("sql ")
+    linksql = CommandLine("SQL ")
 
     ;Should we link against the UI Toolkit library? (-tk option)
-    linktk = CommandLine("tl ")
+    linktk = CommandLine("TK ")
 
     ;Are we in quiet mode? (-q option)
-    quiet = CommandLine("q ")
+    quiet = CommandLine("Q ")
 
     ;Should we create a linker options file? (-o option)
-    optionsFile = CommandLine("o ")
+    optionsFile = CommandLine("O ")
 
     ;Make sure we can open the library with the path provided
     try
@@ -450,7 +446,7 @@ write_comfile,
 
     for ix from 0 thru routines.Count-1
     begin
-        display(optfile,'    '+(a)routines[ix]+' = procedure')
+        display(optfile,'    '+(a)routines[ix]+' = proc')
         if (ix<routines.Count-1) then
             writes(optfile,',-')
         else
