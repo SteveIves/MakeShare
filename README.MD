@@ -41,7 +41,7 @@ This utility must be executed via a global symbol:
 
     -q               Quiet mode, don't display file created message
 ```
-### Examples
+### Example 1
 ```
     $ makeshare -l MYLIB.OLB
 
@@ -51,7 +51,9 @@ This utility must be executed via a global symbol:
          will also be created in the current directory. No linker map file will
          be created, and there will be no spare slots in the symbol vector for
          either data or procedures.
-
+```
+### Example 2
+```
     $ makeshare -l LIB:MYLIB.OLB -e EXE: -s _SH -sql -sd 10 -sp 100 -m
 
          Creates a command procedure named MYLIB.COM which can be used to link
