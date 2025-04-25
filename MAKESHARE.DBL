@@ -4,12 +4,13 @@
 ;
 ; Description:  A utility program that analyses the content of an OpenVMS
 ;               object library and creates a DCL command procedure which can
-;               be used to link a shared image from the library.
+;               be used to link a shared image from the library. This utility
+;               replaces an older and similar DCL command file which was called
+;               MAKE_SHARE.COM.
 ;
 ; Author:       Steve Ives, Synergex Professional Services Group
 ;
-; Revision:     1.0     29th November 2011
-;               1.1     24th April 2025
+; Requires:     Synergy/DE V9.5 on OpenVMS (Alpha or IA64)
 ;
 ;=============================================================================
 ;
@@ -61,34 +62,35 @@ import System.Collections
 main makeshare
 
     record
-        pipe,           i4              ;Pipe channel for DCL command
-        comfile,        i4              ;Output command file channel
-        optfile,        i4              ;Linker options file
-        ix,             i4              ;Generic loop counter
-        spare_data,     i4              ;Number of spare data slots in symbol vector
-        spare_routines, i4              ;Number of spare procedure slots in symbol vector
-        mapFile,        boolean         ;Should the link generate a map file?
-        linksql,        boolean         ;Should the image link against SSQLRTL?
-        linktk,         boolean         ;Should the image link against UI Toolkit?
-        quiet,          boolean         ;Quiet mode is active
-        debugSupport,   boolean         ;Add debugging support in the symbol vector
-        optionsFile,    boolean         ;Generate a linker options file instead of inline options.
-        firstRecord,    boolean         ;Are we processing the first record?
-        buff,           a128            ;Input buffer
-        ClBuffer,       [10]a80         ;Command line parameters buffer
-        ClCount,        d4              ;Number of command line parameters in buffer
-        libspec,        string          ;Object library name (from command line)
-        libfullspec,    string          ;Object library name (from command line)
-        libname,        string          ;Base name of object library
-        exelocation,    string          ;Location for shared image (from command line)
-        exesuffix,      string          ;Suffix for shared image name (from command line)
-        imagespec,      string          ;Full spec for shared image
-        datasections,   @ArrayList      ;Collection of data sections for the symbol vector
-        routines,       @ArrayList      ;Collection of procedures for the symbol vector
+        pipe            ,i4             ;Pipe channel for DCL command
+        comfile         ,i4             ;Output command file channel
+        ix              ,i4             ;Generic loop counter
+        spare_data      ,i4             ;Number of spare data slots in symbol vector
+        spare_routines  ,i4             ;Number of spare procedure slots in symbol vector
+        mapFile         ,boolean        ;Should the link generate a map file?
+        linksql         ,boolean        ;Should the image link against SSQLRTL?
+        linktk          ,boolean        ;Should the image link against UI Toolkit?
+        linkzmq         ,boolean        ;Should the image link against ZeroMQ?
+        quiet           ,boolean        ;Quiet mode is active
+        debugSupport    ,boolean        ;Add debugging support in the symbol vector
+        firstrecord     ,boolean, true  ;Are we processing the first record?
+        ccMode          ,boolean        ;Building a C library
+        buff            ,a128           ;Input buffer
+        ClBuffer        ,[10]a80        ;Command line parameters buffer
+        ClCount         ,d4             ;Number of command line parameters in buffer
+        libspec         ,@String        ;Object library name (from command line)
+        libfullspec     ,@String        ;Object library name (from command line)
+        libname         ,@String        ;Base name of object library
+        exelocation     ,@String        ;Location for shared image (from command line)
+        exesuffix       ,@String        ;Suffix for shared image name (from command line)
+        imagespec       ,@String        ;Full spec for shared image
+        datasections    ,@ArrayList     ;Collection of data sections for the symbol vector
+        routines        ,@ArrayList     ;Collection of procedures for the symbol vector
     endrecord
 
 proc
 
+    ;Open the terminal
     xcall flags(7004020,1)
 
     ;Make sure we're on OpenVMS, and not on VAX
@@ -117,14 +119,14 @@ proc
             libspec = %atrim(ClBuffer[1])
         else
         begin
-            ;No library specified after -l
+            ;No library specified after -L
             call usage
             stop
         end
     end
     else
     begin
-        ;No -l option specified
+        ;No -L option specified
         call usage
         stop
     end
@@ -137,7 +139,7 @@ proc
         else
         begin
             ;No location specified after -e
-            Console.WriteLine("Specify executable location after the -e option!")
+            Console.WriteLine("Specify executable location after the -E option!")
             stop
         end
     end
@@ -147,7 +149,7 @@ proc
         exelocation=""
     end
 
-    ;Do we have a suffix for the shared image executable (-s option)
+    ;Do we have a suffix for the shared image executable (-S option)
     if (CommandLine("S ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
@@ -155,25 +157,25 @@ proc
         else
         begin
             ;No suffix specified after -s
-            Console.WriteLine("Specify executable suffix after the -s option!")
+            Console.WriteLine("Specify executable suffix after the -S option!")
             stop
         end
     end
     else
     begin
-        ;No -s option, no shared image suffix will be used
+        ;No -S option, no shared image suffix will be used
         exesuffix = ""
     end
 
-    ;Are we being asked for spare space for data in the symbol vector  (-sd option)
+    ;Are we being asked for spare space for data in the symbol vector  (-SD option)
     if (CommandLine("SD ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             spare_data = %integer(%atrim(ClBuffer[1]))
         else
         begin
-            ;No number specified after -sd
-            Console.WriteLine("Specify a number after the -sd option!")
+            ;No number specified after -SD
+            Console.WriteLine("Specify a number after the -SD option!")
             stop
         end
     end
@@ -183,41 +185,47 @@ proc
         spare_data = 0
     end
 
-    ;Are we being asked for spare space for procedures in the symbol vector  (-sp option)
+    ;Are we being asked for spare space for procedures in the symbol vector  (-SP option)
     if (CommandLine("SP ",1,ClBuffer,ClCount)) then
     begin
         if (ClCount) then
             spare_routines = %integer(%atrim(ClBuffer[1]))
         else
         begin
-            ;No number specified after -sp
-            Console.WriteLine("Specify a number after the -sp option!")
+            ;No number specified after -SP
+            Console.WriteLine("Specify a number after the -SP option!")
             stop
         end
     end
     else
     begin
-        ;No -sp option, no spare procedure slots in symbol vector
+        ;No -SP option, no spare procedure slots in symbol vector
         spare_routines = 0
     end
 
-    ;Are we being asked to support xfServerPlus debugging?
-    debugSupport = (CommandLine("XD ",1,ClBuffer,ClCount))
+    ;Are we being asked to build a shared image for C code?
+    ccMode = (CommandLine("CC ",1,ClBuffer,ClCount))
 
-    ;Should the link create a map file? (-m option)
+    ;Are we being asked to support xfServerPlus debugging?
+    if (!ccMode)
+        debugSupport = (CommandLine("XD ",1,ClBuffer,ClCount))
+
+    ;Should the link create a map file? (-M option)
     mapFile = CommandLine("M ")
 
-    ;Should we link against the SQL Connection library? (-sql option)
-    linksql = CommandLine("SQL ")
+    ;Should we link against the SQL Connection library? (-SQL option)
+    if (!ccMode)
+        linksql = CommandLine("SQL ")
 
-    ;Should we link against the UI Toolkit library? (-tk option)
-    linktk = CommandLine("TK ")
+    ;Should we link against the UI Toolkit library? (-TK option)
+    if (!ccMode)
+        linktk = CommandLine("TK ")
 
-    ;Are we in quiet mode? (-q option)
+    ;Should we link against the ZeroMQ library? (-ZMQ option)
+    linkzmq = CommandLine("ZMQ ")
+
+    ;Are we in quiet mode? (-Q option)
     quiet = CommandLine("Q ")
-
-    ;Should we create a linker options file? (-o option)
-    optionsFile = CommandLine("O ")
 
     ;Make sure we can open the library with the path provided
     try
@@ -229,6 +237,7 @@ proc
         xcall parse(lfs,,,,,basename)           ;Get base file name only
         libfullspec = %atrim(lfs)               ;Store full spec for later
         libname = %atrim(basename)              ;Store base name for later
+
         close pipe
     end
     catch (ex, @Exception)
@@ -240,7 +249,7 @@ proc
     endtry
 
     ;Get a listing of the contents of the object library
-    firstrecord = true
+
     datasections = new ArrayList()
     routines = new ArrayList()
 
@@ -266,15 +275,14 @@ proc
         if (buff=="Module ")
             call process_module
     end
-
 eof,
-    close pipe
+    close 2
 
     ;Did we find anything?
     if (routines.Count) then
         call write_comfile
     else
-        Console.WriteLine('No routines in library!')
+        Console.WriteLine("No routines in library!")
 
     stop
 
@@ -289,14 +297,35 @@ process_module,
     repeat
     begin
         reads(pipe,buff)
-        if (!buff) then
-            exitloop                            ;No data, we're done with this module
-        else if (buff(1:2)=="$$") then
-            datasections.Add((@a)%atrim(buff))  ;It's a global data section
-        else if (buff(%trim(buff):1)=="$") then
-            datasections.Add((@a)%atrim(buff))  ;It's a common
-        else if (buff!="$SR_")
-            routines.Add((@a)%atrim(buff))      ;It's not s static record, so it's a routine
+
+        ;Are we done with this module?
+        if (!buff)
+            exitloop
+
+        ;Is it a global data section?
+        if (buff(1:2)=="$$") then
+        begin
+            ;Yes, it's a global data section
+            datasections.Add((@a)%atrim(buff))
+        end
+        else
+        begin
+            ;Is it a common?
+            if (buff(%trim(buff):1)=="$") then
+            begin
+                ;Yes, it's a common
+                datasections.Add((@a)%atrim(buff))
+            end
+            else
+            begin
+                ;Make sure it's not a static record
+                if (buff!="$SR_")
+                begin
+                    ;It's a routine
+                    routines.Add((@a)%atrim(buff))
+                end
+            end
+        end
     end
 
     return
@@ -306,18 +335,18 @@ process_module,
 ;
 write_comfile,
 
-    imagespec = exelocation.Length ? exelocation : ""
+
+    if (exelocation.Length) then
+        imagespec = exelocation
+    else
+        imagespec = ""
     imagespec = imagespec + libname
-    imagespec = exesuffix.Length ? imagespec + exesuffix : imagespec
+    if (exesuffix.Length)
+        imagespec = imagespec + exesuffix
     imagespec = imagespec + '.EXE'
 
     open(comfile=0,o,libname+".COM",OPTIONS:"/STREAM")
 
-    if (optionsFile) then 
-        open(optfile=0,o,libname+".OPT",OPTIONS:"/STREAM")
-    else
-        optfile = comfile
-    
     ;Header section
 
     writes(comfile,'$ !============================================================================')
@@ -327,19 +356,22 @@ write_comfile,
     writes(comfile,'$ ! Description: Links '+imagespec+' from '+libspec)
     writes(comfile,'$ !')
     writes(comfile,'$ !============================================================================')
-    
+
     ;Make sure required logicals are present
-    
-    writes(comfile,'$ !')
-    writes(comfile,'$ IF (F$TRNLNM("SYNRTL").EQS."")   THEN DEFINE/NOLOG SYNRTL   SYS$SHARE:SYNRTL.EXE')
-    writes(comfile,'$ IF (F$TRNLNM("DBLTLIB").EQS."")  THEN DEFINE/NOLOG DBLTLIB  SYS$SHARE:DBLTLIB.OLB')
-    if (linksql)
-        writes(comfile,'$ IF (F$TRNLNM("SSQLRTL").EQS."")  THEN DEFINE/NOLOG SSQLRTL  CONNECTDIR:SSQLRTL.EXE')
-    if (linktk)
-        writes(comfile,'$ IF (F$TRNLNM("TKLIB_SH").EQS."") THEN DEFINE/NOLOG TKLIB_SH WND:TKLIB_SH.EXE')
-    writes(comfile,'$ !')
-    writes(comfile,'$ !----------------------------------------------------------------------------')
-    writes(comfile,'$ !')
+
+    if (!ccMode)
+    begin
+        writes(comfile,'$ !')
+        writes(comfile,'$ IF (F$TRNLNM("SYNRTL").EQS."")   THEN DEFINE/NOLOG SYNRTL   SYS$SHARE:SYNRTL.EXE')
+        writes(comfile,'$ IF (F$TRNLNM("DBLTLIB").EQS."")  THEN DEFINE/NOLOG DBLTLIB  SYS$SHARE:DBLTLIB.OLB')
+        if (linksql)
+            writes(comfile,'$ IF (F$TRNLNM("SSQLRTL").EQS."")  THEN DEFINE/NOLOG SSQLRTL  CONNECTDIR:SSQLRTL.EXE')
+        if (linktk)
+            writes(comfile,'$ IF (F$TRNLNM("TKLIB_SH").EQS."") THEN DEFINE/NOLOG TKLIB_SH WND:TKLIB_SH.EXE')
+        writes(comfile,'$ !')
+        writes(comfile,'$ !----------------------------------------------------------------------------')
+        writes(comfile,'$ !')
+    end
 
     ;Display what we're doing
 
@@ -362,130 +394,118 @@ write_comfile,
 
     ;Input items
 
-    if (optionsFile) then
-		writes(comfile," "+libname+'.OPT/OPTION')
-    else
-        writes(comfile,' SYS$INPUT/OPTION')
+    writes(comfile,' SYS$INPUT/OPTION')
 
-    writes(optfile,'!')
-    writes(optfile,libspec+'/LIBRARY')
+    writes(comfile,'!')
+    writes(comfile,libspec+'/LIBRARY')
 
     if (debugSupport)
-        writes(optfile,'DBLDIR:elb.obj')
+        writes(comfile,'DBLDIR:elb.obj')
 
     if (linksql)
-        writes(optfile,'SSQLRTL/SHARE')
+        writes(comfile,'SSQLRTL/SHARE')
 
     if (linktk)
-        writes(optfile,'TKLIB_SH/SHARE')
+        writes(comfile,'TKLIB_SH/SHARE')
 
-    writes(optfile,'SYNRTL/SHARE')
-    writes(optfile,'DBLTLIB/LIBRARY')
-    writes(optfile,'!')
+    if (!ccMode)
+    begin
+        writes(comfile,'SYNRTL/SHARE')
+        writes(comfile,'DBLTLIB/LIBRARY')
+    end
+
+    if (linkzmq)
+    begin
+        writes(comfile,'ZMQ$SHR32/SHARE')
+    end
+
+    writes(comfile,'!')
 
     ;Collects and clusters
 
-    writes(optfile,'CLUSTER = ' + libname + '_STATIC_RECORDS')
-    writes(optfile,'COLLECT = ' + libname + '_STATIC_RECORDS, $DBL_STCREC')
-    writes(optfile,'CLUSTER = ' + libname + '_LOCAL_DATA')
-    writes(optfile,'COLLECT = ' + libname + '_LOCAL DATA,$DBL_DATA,$LOCAL,$DATA')
-    writes(optfile,'CLUSTER = ' + libname + '_ADDRESS')
-    writes(optfile,'COLLECT = ' + libname + '_ADDRESS,$DBL_DESCR,$DBL_FXDCTL,$EXT$,$LINK$')
-    writes(optfile,'CLUSTER = ' + libname + '$$READONLY')
-    writes(optfile,'COLLECT = ' + libname + '$$READONLY,$CODE$,$DBLTRNSF_CODE')
-    writes(optfile,'CLUSTER = ' + libname + '$$CODE')
-    writes(optfile,'COLLECT = ' + libname + '$$CODE,$DBG$,$DBL_ADDR,$DBL_CODE,$DBL_LINCTL,$DBL_LITERAL')
-    writes(optfile,'!')
-
-    if (datasections.Count)
+    if (!ccMode)
     begin
-        writes(optfile,'! Collect shared data')
-        writes(optfile,'!')
-        writes(optfile,'CLUSTER = ' + libname + '_SHARED_DATA')
-        writes(optfile,'COLLECT = ' + libname + '_SHARED_DATA, -')
+        writes(comfile,'CLUSTER = ' + libname + '_STATIC_RECORDS')
+        writes(comfile,'COLLECT = ' + libname + '_STATIC_RECORDS, $DBL_STCREC')
+        writes(comfile,'CLUSTER = ' + libname + '_LOCAL_DATA')
+        writes(comfile,'COLLECT = ' + libname + '_LOCAL DATA,$DBL_DATA,$LOCAL,$DATA')
+        writes(comfile,'CLUSTER = ' + libname + '_ADDRESS')
+        writes(comfile,'COLLECT = ' + libname + '_ADDRESS,$DBL_DESCR,$DBL_FXDCTL,$EXT$,$LINK$')
+        writes(comfile,'CLUSTER = ' + libname + '$$READONLY')
+        writes(comfile,'COLLECT = ' + libname + '$$READONLY,$CODE$,$DBLTRNSF_CODE')
+        writes(comfile,'CLUSTER = ' + libname + '$$CODE')
+        writes(comfile,'COLLECT = ' + libname + '$$CODE,$DBG$,$DBL_ADDR,$DBL_CODE,$DBL_LINCTL,$DBL_LITERAL')
+        writes(comfile,'!')
+    end
+
+    if (!ccMode && datasections.Count)
+    begin
+        writes(comfile,'! Collect shared data')
+        writes(comfile,'!')
+        writes(comfile,'CLUSTER = ' + libname + '_SHARED_DATA')
+        writes(comfile,'COLLECT = ' + libname + '_SHARED_DATA, -')
         for ix from 0 thru datasections.Count-1
         begin
-            display(optfile,'   ' + (a)datasections[ix])
+            display(comfile,'   ' + (a)datasections[ix])
             if (ix<datasections.Count-1) then
-                writes(optfile,",-")
+                writes(comfile,",-")
             else
-                writes(optfile,"")
+                writes(comfile,"")
         end
-        writes(optfile,'!')
+        writes(comfile,'!')
+    end
+
+    if (ccMode)
+    begin
+        writes(comfile,'CASE_SENSITIVE = YES')
+        writes(comfile,'!')
     end
 
     ;Symbol vector
 
-    writes(optfile,'symbol_vector=(-')
-
     if (debugSupport)
     begin
-        writes(optfile,'    !')
-        writes(optfile,'    ! Debugging support')
-        writes(optfile,'    !')
-        writes(optfile,"    $ELB_DBG=data, -")
+        writes(comfile,"!")
+        writes(comfile,"! Debugging support")
+        writes(comfile,"!")
+        writes(comfile,"SYMBOL_VECTOR=($ELB_DBG=data)")
     end
 
-    if (datasections.Count)
+    if (!ccMode && datasections.Count)
     begin
-        writes(optfile,'    !')
-        writes(optfile,'    ! Shared data')
-        writes(optfile,'    !')
+        writes(comfile,"!")
+        writes(comfile,"! Shared data")
+        writes(comfile,"!")
 
         for ix from 0 thru datasections.Count-1
-            writes(optfile,'    ' + (a)datasections[ix] + ' = data,-')
+            writes(comfile,"SYMBOL_VECTOR=("+(a)datasections[ix]+"=DATA)")
 
         if (spare_data)
             for ix from 1 thru spare_data
-                writes(optfile,'    SPARE,-')
+                writes(comfile,"SYMBOL_VECTOR=(SPARE)")
     end
 
-    writes(optfile,'    !')
-    writes(optfile,'    ! Procedures')
-    writes(optfile,'    !')
+    writes(comfile,"!")
+    writes(comfile,"! Procedures")
+    writes(comfile,"!")
 
     for ix from 0 thru routines.Count-1
-    begin
-        display(optfile,'    '+(a)routines[ix]+' = proc')
-        if (ix<routines.Count-1) then
-            writes(optfile,',-')
-        else
-        begin
-            if (spare_routines) then
-                writes(optfile,',-')
-            else
-                writes(optfile,')')
-        end
-    end
+        writes(comfile,"SYMBOL_VECTOR=("+(a)routines[ix]+"=PROCEDURE)")
 
     if (spare_routines)
-    begin
         for ix from 1 thru spare_routines
-        begin
-            display(optfile,'    SPARE')
-            if (ix<spare_routines) then
-                writes(optfile,',-')
-            else
-                writes(optfile,')')
-        end
-    end
+            writes(comfile,"SYMBOL_VECTOR=(SPARE)")
 
     ;All done
 
-    writes(optfile,'$ !')
-    writes(optfile,'$ EXIT')
-    writes(optfile,'$ !')
+    writes(comfile,'$ !')
+    writes(comfile,'$ EXIT')
+    writes(comfile,'$ !')
 
     close comfile
 
-    if (optionsFile)
-        close optfile
-    
     if (!quiet)
         Console.WriteLine("Created "+libname+".COM")
-
-    if (!quiet && optionsFile)
-        Console.WriteLine("Created "+libname+".OPT")
 
     return
 
@@ -512,21 +532,23 @@ usage,
     Console.WriteLine("")
     Console.WriteLine("    -s <suffix>      Specifies a suffix for the shared image executable name")
     Console.WriteLine("")
-    Console.WriteLine("    -xd              Add support for xfServerPlus debugging")
-    Console.WriteLine("")
     Console.WriteLine("    -m               Generate a linker map file")
-    Console.WriteLine("")
-    Console.WriteLine("    -o               Generate a linker options file instead of inline options")    
-    Console.WriteLine("")
-    Console.WriteLine("    -sql             Link against the SQL Connection shared image")
-    Console.WriteLine("")
-    Console.WriteLine("    -tk              Link against the UI Toolkit shared image")
     Console.WriteLine("")
     Console.WriteLine("    -sd <n>          Include n spare symbol vector positions for data")
     Console.WriteLine("")
     Console.WriteLine("    -sp <n>          Include n spare symbol vector positions for procedures")
     Console.WriteLine("")
     Console.WriteLine("    -q               Quiet mode, don't display file created message")
+    Console.WriteLine("")
+    Console.WriteLine("    -cc              Library contains only C code")
+    Console.WriteLine("")
+    Console.WriteLine("    -xd              Add support for xfServerPlus debugging (not C mode)")
+    Console.WriteLine("")
+    Console.WriteLine("    -sql             Link against the SQL Connection shared image (not C mode)")
+    Console.WriteLine("")
+    Console.WriteLine("    -tk              Link against the UI Toolkit shared image (not C mode)")
+    Console.WriteLine("")
+    Console.WriteLine("    -zmq             Link against the ZeroMQ shared image")
     Console.WriteLine("")
     Console.WriteLine("  Examples:")
     Console.WriteLine("")
@@ -566,7 +588,7 @@ function CommandLine, boolean
     optional out a_numoptvals   ,n      ;Number of argument
     endparams
 
-    .define MAXARGS 128
+.define MAXARGS 128
 
     record local_data
         fstatus         ,boolean, false ;Function return status
@@ -586,19 +608,20 @@ function CommandLine, boolean
 proc
 
     init local_data
-	
-    if (^passed(a_maxoptvals) && ^passed(a_optvals))
+
+    if (^passed(a_maxoptvals)&&^passed(a_optvals))
         maxoptvals = a_maxoptvals
 
-    opt_char = %option(34) ? "/" : "-"
+    if (%option(34)) then
+        opt_char = '/'
+    else
+        opt_char = '-'
 
-    xcall cmdln(command,maxopts,arg_pos,arg_len)
-
-    upcase command
+    cmdln(command, maxopts, arg_pos, arg_len)
 
     for ctr from 1 thru maxopts
     begin
-        if (arg_pos[ctr] && arg_len[ctr]) then
+        if (arg_pos[ctr]&&arg_len[ctr]) then
             option = command(arg_pos[ctr]:arg_len[ctr])
         else
             clear option
@@ -609,11 +632,11 @@ proc
         ;After 7.2 they can be optionally parsed case-preserved.  This is
         ;based on a process setting $SET PROCESS/PARSE_STYLE=TRADITIONAL|EXTENDED.
         ;CodeGen required TRADITIONAL command-line parsing to be used.
-        if (option==opt_char+a_opt)
+        if (option.eq.opt_char+UpperCase(a_opt))
 .else
         if (option==opt_char+a_opt)
 .endc
-            call process_argument
+        call process_argument
     end
 
     if (^passed(a_numoptvals))
@@ -621,60 +644,61 @@ proc
 
     freturn fstatus
 
+
 process_argument,
 
-        ;Found requested option
-        fstatus = true
+    ;Found requested option
+    fstatus = true
+
+    ;Process next argument
+    ctr += 1
+
+    if (arg_pos[ctr]&&arg_len[ctr]) then
+        option = command(arg_pos[ctr]:arg_len[ctr])
+    else
+        option = opt_char
+
+    while(option!=opt_char)
+    begin
+        num_args+=1
+        if (num_args<=maxoptvals)
+        begin
+            ;Strip leading and trailing quote characters
+            using option select
+            ("'", '"'),
+            begin
+                length = trimz(option)
+                if ((length>1)&&(option(length:1)==option(1:1)))
+                begin
+                    if (length>2) then
+                        option = option(2, length-1)
+                    else
+                        clear option
+                end
+            end
+            endusing
+            a_optvals[num_args] = option
+        end
 
         ;Process next argument
-        ctr += 1
+        ctr+=1
 
         if (arg_pos[ctr]&&arg_len[ctr]) then
             option = command(arg_pos[ctr]:arg_len[ctr])
         else
             option = opt_char
+    end
 
-        while(option!=opt_char)
-        begin
-            num_args+=1
-            if (num_args<=maxoptvals)
-            begin
-                ;Strip leading and trailing quote characters
-                using option select
-                ("'", '"'),
-                begin
-                    length = trimz(option)
-                    if ((length>1)&&(option(length:1)==option(1:1)))
-                    begin
-                        if (length>2) then
-                            option = option(2, length-1)
-                        else
-                            clear option
-                    end
-                end
-                endusing
-                a_optvals[num_args] = option
-            end
-
-            ;Process next argument
-            ctr+=1
-
-            if (arg_pos[ctr]&&arg_len[ctr]) then
-                option = command(arg_pos[ctr]:arg_len[ctr])
-            else
-                option = opt_char
-          end
-
-        ;Adjust counter to stay in correct position in loop
-        ctr -= 1
-        return
+    ;Adjust counter to stay in correct position in loop
+    ctr -= 1
+    return
 
 endfunction
 
 ;=============================================================================
 ;Return an uppercase version of a string
 ;
-function UpperCase, string
+function UpperCase, @String
     required in a_string, a
     stack record
         outstring, i4
